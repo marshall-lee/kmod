@@ -126,7 +126,7 @@ func TestOptionIgnoreStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		want := unloaded
+		want := StatusUnloaded
 		status, err := k.modStatus("foo")
 		if err != nil {
 			t.Fatal(err)
@@ -142,7 +142,7 @@ func TestOptionIgnoreStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		want := unknown
+		want := StatusUnknown
 		status, err := k.modStatus("foo")
 		if err != nil {
 			t.Fatal(err)

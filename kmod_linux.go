@@ -1,4 +1,4 @@
-//go:generate stringer -type status
+//go:generate stringer -type Status -trimprefix Status
 
 // Package kmod provides functions to load and unload Linux kernel modules.
 //
@@ -105,6 +105,57 @@ func New(opts ...Option) (*Kmod, error) {
 		return nil, err
 	}
 	return k, nil
+}
+
+type Status int
+
+// /proc/modules
+//      name | memory size | reference count | references | state: <Live|Loading|Unloading>
+// 		macvlan 28672 1 macvtap, Live 0x0000000000000000
+
+const (
+	StatusUnknown Status = iota
+	StatusUnloaded
+	StatusUnloading
+	StatusLoading
+	StatusLive
+	StatusInUse
+)
+
+// Status returns module status (live, loading, unloading).
+func ModStatus(name string) (Status, error) {
+	f, err := os.Open("/proc/modules")
+	if err != nil {
+		return StatusUnknown, err
+	}
+	defer f.Close()
+
+	state := StatusUnloaded
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if fields[0] == name {
+			if fields[2] != "0" {
+				state = StatusInUse
+				break
+			}
+			switch fields[4] {
+			case "Live":
+				state = StatusLive
+			case "Loading":
+				state = StatusLoading
+			case "Unloading":
+				state = StatusUnloading
+			}
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return state, err
+	}
+
+	return state, nil
 }
 
 // Load loads a kernel module. If the module depends on other modules
@@ -269,57 +320,11 @@ type module struct {
 	flags  int
 }
 
-type status int
-
-const (
-	unknown status = iota
-	unloaded
-	unloading
-	loading
-	live
-	inuse
-)
-
-// /proc/modules
-//      name | memory size | reference count | references | state: <Live|Loading|Unloading>
-// 		macvlan 28672 1 macvtap, Live 0x0000000000000000
-func (k *Kmod) modStatus(name string) (status, error) {
-	var state status = unknown
+func (k *Kmod) modStatus(name string) (Status, error) {
 	if k.ignoreStatus {
-		return state, nil
+		return StatusUnknown, nil
 	}
-	f, err := os.Open("/proc/modules")
-	if err != nil {
-		return state, err
-	}
-	defer f.Close()
-
-	state = unloaded
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if fields[0] == name {
-			if fields[2] != "0" {
-				state = inuse
-				break
-			}
-			switch fields[4] {
-			case "Live":
-				state = live
-			case "Loading":
-				state = loading
-			case "Unloading":
-				state = unloading
-			}
-			break
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return state, err
-	}
-
-	return state, nil
+	return ModStatus(name)
 }
 
 // modules.alias
@@ -436,7 +441,7 @@ func (k *Kmod) load(m module) error {
 	if err != nil {
 		return err
 	}
-	if state >= loading {
+	if state >= StatusLoading {
 		return nil
 	}
 	if k.dryrun {
@@ -474,10 +479,10 @@ func (k *Kmod) unload(m module) error {
 	if err != nil {
 		return err
 	}
-	if state == unloading || state == unloaded {
+	if state == StatusUnloading || state == StatusUnloaded {
 		return nil
 	}
-	if state == inuse {
+	if state == StatusInUse {
 		return ErrModuleInUse
 	}
 	if k.dryrun {
